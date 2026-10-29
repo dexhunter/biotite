@@ -221,7 +221,23 @@ class _AtomArrayBase(Copyable, metaclass=abc.ABCMeta):
         index: NDArray1[Any, np.integer] | NDArray1[Any, np.bool_] | slice,
     ) -> Self:
         # Index is one dimensional (boolean mask, index array)
-        new_coord = self._coord[..., index, :]
+        # Reuse mask positions for coordinates and all annotation categories.
+        # Keep other indices on NumPy's indexing path to preserve its errors.
+        annotation_index = index
+        coord = self._coord
+        if (
+            type(index) is np.ndarray
+            and index.ndim == 1
+            and index.dtype == np.bool_
+            and len(index) == self._array_length
+            and type(coord) is np.ndarray
+            and coord.ndim >= 2
+            and coord.shape[-2] == len(index)
+        ):
+            annotation_index = np.flatnonzero(index)
+            new_coord = coord.take(annotation_index, axis=-2, mode="clip")
+        else:
+            new_coord = coord[..., index, :]
         new_length = new_coord.shape[-2]
         if isinstance(self, AtomArray):
             new_object = AtomArray.__new__(AtomArray)
@@ -239,7 +255,12 @@ class _AtomArrayBase(Copyable, metaclass=abc.ABCMeta):
             new_object,
             "_annot",
             {
-                annotation: array.__getitem__(index)
+                annotation: array.take(annotation_index, axis=0, mode="clip")
+                if annotation_index is not index
+                and type(array) is np.ndarray
+                and array.ndim == 1
+                and len(array) == len(index)
+                else array.__getitem__(index)
                 for annotation, array in self._annot.items()
             },
         )
